@@ -68,3 +68,4 @@ Short entries, newest last. "Pending" = proposed, waiting for the owner's yes.
 - **Decided (owner, 2026-11-14):** license AGPL-3.0, matching SillyTavern (Dials imports SillyTavern's own modules). LICENSE is the standard text copied from SillyTavern's repo.
 - **2026-11-14:** owner added assets/dials-readme-banner.png (README banner) and assets/dials-logo.png. Banner used at the top of the README.
 - **Decided (owner yes, 2026-11-14):** the logo is used inside SillyTavern (panel heading and token bar) via a small transparent copy, assets/dials-icon.png (96px, ~16 KB) made from dials-logo.png; originals unchanged.
+- **2026-11-14:** in-app icon remade from the owner's no-glow logo (assets/dials-logo-noglow.png, transparent background); the glowing logo stays for other uses.
