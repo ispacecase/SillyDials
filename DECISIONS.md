@@ -46,3 +46,4 @@ Short entries, newest last. "Pending" = proposed, waiting for the owner's yes.
 - **Build shape (2026-11-14):** Dials lives inside SillyTavern's own left drawer (same sliders button, same spot). It hides SillyTavern's content and shows: a preset bar (dropdown, Apply, Undo, Save as mine) and tabs Provider options / SillyTavern settings (the real controls, moved in, with plain explanations added) / Prompts (the real prompt manager, moved in) / Tokens. Turning the takeover off moves every control back. The Extensions menu keeps only a small on/off switch.
 - **2026-11-14:** Storyloom integration handed to the Storyloom session via docs/storyloom-prompt.md (owner pastes it there). Dials side unchanged.
 - **Decided (owner, 2026-11-14):** keep the tabs (Provider options / SillyTavern settings / Prompts / Tokens); the look is approved.
+- **2026-11-14:** published as public repo https://github.com/ispacecase/SillyDials (owner's choice), first commit 0.1.0.
