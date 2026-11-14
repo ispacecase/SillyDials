@@ -57,3 +57,7 @@ npm test
 ```
 
 The pure logic (spec reading, request building, usage reading, presets, layout) lives in `src/` and is covered by Node's built-in test runner. `tools/fake-provider.mjs` is a small fake OpenAI-compatible provider for browser testing; `tools/snapshot-venice.mjs` refreshes the bundled Venice spec copy in `data/`.
+
+## License
+
+[AGPL-3.0](LICENSE), the same license as SillyTavern. You can use, share and modify Dials; if you share a modified version (or run one for others), share your changes under the same license.
