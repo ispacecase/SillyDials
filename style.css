@@ -51,3 +51,30 @@
 #dials-tokenbar:hover { opacity: 1; }
 #dials-tokenbar i { color: var(--SmartThemeQuoteColor, #e18a24); }
 #dials-tokenbar .dials-warn-text { color: var(--warning, #e0a040); font-weight: 600; }
+
+/* ---------- merged settings ---------- */
+#dials-shell .dials-group-open { margin-top: 4px; }
+#dials-shell details.dials-group { background: var(--dials-card); border: 1px solid var(--dials-line); border-radius: 10px; padding: 4px 8px; margin: 8px 0; }
+#dials-shell details.dials-group > summary { font-weight: 700; padding: 6px 2px; }
+#dials-shell .dials-option.dials-default .dials-input .text_pole { opacity: .55; font-style: italic; }
+#dials-shell .dials-option.dials-default .dials-label { opacity: .8; }
+#dials-shell .dials-option.dials-unsupported { border-style: dashed; }
+#dials-shell .dials-status { font-size: .78em; opacity: .7; margin: 2px 0; }
+#dials-shell .dials-status-set { opacity: .95; color: var(--dials-accent); }
+#dials-shell .dials-desc { font-size: .78em; opacity: .65; margin-top: 3px; }
+#dials-shell .dials-desc-label { font-weight: 600; }
+#dials-shell .dials-card { background: var(--dials-card); border: 1px solid var(--dials-line); border-radius: 12px; padding: 10px; margin: 6px 0 10px; }
+#dials-shell .dials-cardtitle { font-weight: 700; font-size: 1.1em; }
+#dials-shell .dials-carddesc { font-size: .85em; opacity: .85; margin: 4px 0 6px; }
+#dials-shell .dials-facts { width: 100%; font-size: .82em; border-collapse: collapse; }
+#dials-shell .dials-facts th { text-align: left; font-weight: 600; padding: 2px 8px 2px 0; vertical-align: top; width: 45%; opacity: .85; }
+#dials-shell .dials-facts td { padding: 2px 0; word-break: break-word; }
+#dials-shell .dials-facts td.dials-no { opacity: .5; }
+#dials-shell .dials-caps summary { cursor: pointer; font-size: .85em; margin-top: 6px; }
+#dials-shell .dials-providernote { font-size: .82em; margin: 6px 0; }
+#dials-shell .dials-providernote summary { font-weight: 600; cursor: pointer; }
+#dials-shell .dials-notetext { white-space: pre-wrap; opacity: .8; }
+#dials-shell .dials-st-note { margin-top: 2px; }
+#dials-shell .dials-groupbody > .range-block,
+#dials-shell .dials-groupbody > [data-source] { background: var(--dials-card); border: 1px solid var(--dials-line); border-radius: 10px; padding: 8px 10px; margin: 6px 0; width: auto; }
+#dials-shell .dials-groupbody > .range-block .range-block-title { font-weight: 600; }

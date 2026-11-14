@@ -1,6 +1,20 @@
 {
  "source": "https://docs.venice.ai/swagger.yaml",
  "version": "20261113.174621",
+ "notes": [
+  {
+   "title": "About this API",
+   "text": "The Venice.ai API."
+  },
+  {
+   "title": "Provider guidance",
+   "text": "Venice.ai is an OpenAI-compatible inference API supporting text, image, audio, and video generation.\n\n**Authentication options:**\n- API Key: Use Bearer token in Authorization header\n- x402 Wallet: Use a prepaid x402 credit balance via EVM or Solana wallet (no account required)\n\n**For x402 wallet access:**\n1. POST /x402/top-up without headers to get payment requirements\n2. Choose one of the returned Base or Solana payment options and sign a USDC payment using the x402 SDK\n3. POST /x402/top-up with PAYMENT-SIGNATURE header to add credits\n4. Call any inference endpoint with SIGN-IN-WITH-X header\n\n**Pricing:** Prepaid credits consumed per request. Check /models for available models and their capabilities."
+  },
+  {
+   "title": "Chat requests",
+   "text": "/api/v1/chat/completions\n\nRun text inference based on the supplied parameters. Supports multimodal inputs including text, images (image_url), audio (input_audio), video (video_url), and files (file) for compatible models. File inputs (PDF, DOCX, PPTX, XLSX, TXT, etc.) are automatically extracted to text before being sent to the model. Long running requests should use the streaming API by setting stream=true in your request.\n\n**Authentication:** This endpoint accepts either a Bearer API key or a `SIGN-IN-WITH-X` header for x402 wallet-based authentication. The legacy `X-Sign-In-With-X` header is also accepted during migration. When using x402, a `402 Payment Required` response indicates insufficient balance and includes top-up instructions. A `401` response with code `X402_USER_NOT_ALLOWED` means the wallet's Venice account is banned or deleted, or the wallet's x402 credit account belongs to a different user."
+  }
+ ],
  "schema": {
   "type": "object",
   "properties": {

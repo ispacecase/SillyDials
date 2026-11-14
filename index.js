@@ -2,15 +2,16 @@
 // plus a real token counter from the provider's usage data.
 import { saveChatDebounced } from '../../../../script.js';
 import { yaml, localforage } from '../../../../lib.js';
-import { chatRequestSchema, optionsFromSchema, leaves, coerceValue, specCandidates, OPENAI_FALLBACK_SCHEMA } from './src/spec.mjs';
-import { detectProvider, normalizeModels, supportsOption, canSendExtras } from './src/models.mjs';
-import { buildExtras, applyExtras } from './src/extras.mjs';
+import { chatRequestSchema, optionsFromSchema, leaves, coerceValue, specCandidates, providerNotes, OPENAI_FALLBACK_SCHEMA } from './src/spec.mjs';
+import { detectProvider, normalizeModels, supportsOption, canSendExtras, defaultFor, allowedValues, capabilityList, modelDefaultForField } from './src/models.mjs';
+import { planLayout, placeableStIds } from './src/layout.mjs';
+import { buildExtras, applyExtras, mergeUserWins } from './src/extras.mjs';
 import { createStreamReader, readJsonReply, limitStatus, costOf, addToTotals, pruneDays, usageLine, formatCost, dayOf } from './src/usage.mjs';
 import { SILLYTAVERN, connectionKey, settingsKey, valuesFor, setValue, copyValues } from './src/keys.mjs';
 import { CONCEPTS, BUILTIN_PRESETS, resolvePreset, allPresets, makeUserPreset } from './src/presets.mjs';
-import { explainField, explainSillyTavern } from './src/explain.mjs';
+import { explainField, explainSillyTavern, explainStControl, modelNote } from './src/explain.mjs';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const MODULE = 'dials';
 const GENERATE_URL = '/api/backends/chat-completions/generate';
 const TAG_FIELD = 'dials_tag';
@@ -18,7 +19,7 @@ const CACHE_HOURS = 24;
 const VENICE_SPEC_URL = 'https://docs.venice.ai/swagger.yaml';
 const BASE = new URL('.', import.meta.url);
 
-const DEFAULTS = Object.freeze({ takeover: true, tab: 'options', preset: 'default', userPresets: [], undo: null, seen: {}, values: {}, totals: {}, showCost: false, requestUsage: true, nearAt: 0.9, showUnsupported: false, view: SILLYTAVERN });
+const DEFAULTS = Object.freeze({ takeover: true, tab: 'recommended', preset: 'default', userPresets: [], undo: null, seen: {}, values: {}, totals: {}, showCost: false, requestUsage: true, nearAt: 0.9, showUnsupported: false, view: SILLYTAVERN });
 
 const ctx = () => SillyTavern.getContext();
 
@@ -94,22 +95,23 @@ async function fetchText(url, ms = 8000) {
 
 const parseSpecText = text => { const t = text.trim(); return t.startsWith('{') ? JSON.parse(t) : yaml.parse(t); };
 
-/** Returns {schema, from: 'live' | 'bundled' | 'standard', address}. */
+/** Returns {schema, notes: [{title, text}], from: 'live' | 'bundled' | 'standard', address}. */
 async function loadSchema(conn, force) {
     const provider = detectProvider(conn);
     const endpoint = conn.source === 'custom' ? conn.url : conn.source;
-    return cached(`dials:spec:${provider}:${endpoint}`, async () => {
+    const fromSpec = (spec, address) => ({ schema: chatRequestSchema(spec), notes: providerNotes(spec), from: 'live', address });
+    return cached(`dials2:spec:${provider}:${endpoint}`, async () => {
         if (provider === 'venice') {
-            try { return { schema: chatRequestSchema(parseSpecText(await fetchText(VENICE_SPEC_URL))), from: 'live', address: VENICE_SPEC_URL }; } catch (e) { console.info('[Dials] live Venice spec unavailable, using bundled copy:', e.message); }
+            try { return fromSpec(parseSpecText(await fetchText(VENICE_SPEC_URL)), VENICE_SPEC_URL); } catch (e) { console.info('[Dials] live Venice spec unavailable, using bundled copy:', e.message); }
             const snap = await (await fetch(new URL('data/venice-chat-request.json', BASE))).json();
-            return { schema: snap.schema, from: 'bundled', address: `${snap.source} (${snap.version})` };
+            return { schema: snap.schema, notes: snap.notes ?? [], from: 'bundled', address: `${snap.source} (${snap.version})` };
         }
         if (provider === 'generic' && conn.source === 'custom') {
             for (const address of specCandidates(conn.url)) {
-                try { return { schema: chatRequestSchema(parseSpecText(await fetchText(address, 4000))), from: 'live', address }; } catch { /* try next */ }
+                try { return fromSpec(parseSpecText(await fetchText(address, 4000)), address); } catch { /* try next */ }
             }
         }
-        return { schema: OPENAI_FALLBACK_SCHEMA, from: 'standard', address: null };
+        return { schema: OPENAI_FALLBACK_SCHEMA, notes: [], from: 'standard', address: null };
     }, force);
 }
 
@@ -117,7 +119,7 @@ async function loadSchema(conn, force) {
 async function loadModels(conn, force) {
     const provider = detectProvider(conn);
     const endpoint = conn.source === 'custom' ? conn.url : conn.source;
-    const raw = await cached(`dials:models:${endpoint}`, async () => {
+    const raw = await cached(`dials2:models:${endpoint}`, async () => {
         const c = ctx();
         const r = await fetch('/api/backends/chat-completions/status', { method: 'POST', headers: c.getRequestHeaders(), body: JSON.stringify(conn.statusPayload ?? { chat_completion_source: conn.source, custom_url: conn.url }), cache: 'no-cache' });
         if (!r.ok) throw Error(`model list HTTP ${r.status}`);
@@ -407,6 +409,44 @@ function addExplanations(root) {
     });
 }
 
+// SillyTavern's individual setting blocks, placed into Dials' groups. Separate from the big moves so they can be redone.
+const blockMoves = []; // {node, marker}
+const hiddenBlocks = [];
+
+/** The block (title + control) that holds one of SillyTavern's settings. */
+function blockOf(id) {
+    return document.getElementById(id)?.closest('.range-block, [data-source]') ?? null;
+}
+
+function restoreBlocks() {
+    while (blockMoves.length) {
+        const { node, marker } = blockMoves.pop();
+        if (marker.isConnected) marker.replaceWith(node);
+    }
+    while (hiddenBlocks.length) hiddenBlocks.pop().classList.remove('dials-hidden');
+}
+
+function placeBlock(id, target) {
+    const node = blockOf(id);
+    if (!node || !target) return false;
+    const marker = document.createComment(`dials: original place of #${id}`);
+    node.before(marker);
+    target.append(node);
+    blockMoves.push({ node, marker });
+    const text = explainStControl(id);
+    if (text && !node.querySelector(':scope > .dials-explain')) node.append(el('div', { class: 'dials-explain', text }));
+    const field = { temp_openai: 'temperature', top_p_openai: 'top_p' }[id];
+    const def = field ? modelDefaultForField(current?.model, field) : null;
+    node.querySelector(':scope > .dials-st-note')?.remove();
+    if (def !== null) node.append(el('div', { class: 'dials-muted dials-st-note', text: `This model's own default: ${def} (from the provider).` }));
+    return true;
+}
+
+function hideBlock(id) {
+    const node = blockOf(id);
+    if (node && !node.classList.contains('dials-hidden')) { node.classList.add('dials-hidden'); hiddenBlocks.push(node); }
+}
+
 function showTab(name) {
     if (!shell) return;
     settings().tab = name;
@@ -422,27 +462,32 @@ function takeOver() {
     const config = document.getElementById('ai_response_configuration');
     const prompts = document.getElementById('completion_prompt_manager');
     if (!drawer || !inner || !config || shell) return;
-    const tabs = [['options', 'Provider options', 'fa-sliders'], ['st', 'SillyTavern settings', 'fa-gears'], ['prompts', 'Prompts', 'fa-list'], ['tokens', 'Tokens', 'fa-coins']];
+    const tabs = [['recommended', 'Recommended', 'fa-star'], ['experts', 'Experts only', 'fa-flask'], ['prompts', 'Prompts', 'fa-list'], ['tokens', 'Tokens', 'fa-coins']];
     shell = el('div', { id: 'dials-shell', class: 'dials-settings scrollableInner' },
         el('div', { class: 'dials-head' },
             el('div', { class: 'dials-brand' }, el('i', { class: 'fa-solid fa-gauge-high' }), el('span', { text: 'Dials' })),
             el('div', { class: 'dials-top' })),
         el('div', { class: 'dials-presetbar' }),
         el('div', { class: 'dials-tabbar' }, tabs.map(([id, label, icon]) => el('button', { class: 'dials-tab-button', 'data-tab': id, type: 'button', onclick: () => showTab(id) }, el('i', { class: `fa-solid ${icon}` }), el('span', { text: label })))),
-        el('div', { class: 'dials-tab', 'data-tab': 'options' },
-            el('div', { class: 'dials-notes' }), el('div', { class: 'dials-options' }), el('div', { class: 'dials-extra' }), el('div', { class: 'dials-preview-box' })),
-        el('div', { class: 'dials-tab dials-st', 'data-tab': 'st' }),
+        el('div', { class: 'dials-tab', 'data-tab': 'recommended' },
+            el('div', { class: 'dials-modelcard' }), el('div', { class: 'dials-groups', 'data-for': 'recommended' })),
+        el('div', { class: 'dials-tab', 'data-tab': 'experts' },
+            el('div', { class: 'dials-notes' }), el('div', { class: 'dials-groups', 'data-for': 'experts' }),
+            el('div', { class: 'dials-extra' }), el('div', { class: 'dials-preview-box' }),
+            el('details', { class: 'dials-group dials-st' }, el('summary', { text: 'Other SillyTavern settings' }),
+                el('div', { class: 'dials-muted', text: 'Everything else from SillyTavern\'s own panel: its presets, proxy, prompt handling and settings for other kinds of connection.' }))),
         el('div', { class: 'dials-tab', 'data-tab': 'prompts' }, el('div', { class: 'dials-muted dials-prompts-note' })),
         el('div', { class: 'dials-tab', 'data-tab': 'tokens' }, el('div', { class: 'dials-totals' }), el('div', { class: 'dials-prefs' })));
     inner.before(shell);
     inner.classList.add('dials-hidden');
     drawer.querySelector('#clickSlidersTips')?.classList.add('dials-hidden');
     moveInto(prompts, shell.querySelector('.dials-tab[data-tab="prompts"]'));
-    moveInto(config, shell.querySelector('.dials-tab[data-tab="st"]'));
+    moveInto(config, shell.querySelector('.dials-st'));
     addExplanations(shell.querySelector('.dials-st'));
     panel = shell;
     document.querySelector('#ai-config-button .drawer-toggle')?.addEventListener('click', onDrawerToggle);
-    showTab(settings().tab || 'options');
+    const tab = settings().tab;
+    showTab(['recommended', 'experts', 'prompts', 'tokens'].includes(tab) ? tab : 'recommended');
     refreshPanel(false);
 }
 
@@ -453,7 +498,8 @@ function onDrawerToggle() {
 function giveBack() {
     if (!shell) return;
     document.querySelector('#ai-config-button .drawer-toggle')?.removeEventListener('click', onDrawerToggle);
-    shell.querySelectorAll('.dials-explain').forEach(x => x.remove());
+    restoreBlocks();
+    document.querySelectorAll('.dials-explain, .dials-st-note').forEach(x => x.remove());
     restoreMoved();
     document.querySelector('#left-nav-panel > .scrollableInner.dials-hidden')?.classList.remove('dials-hidden');
     document.getElementById('clickSlidersTips')?.classList.remove('dials-hidden');
@@ -470,6 +516,7 @@ function setTakeover(on) {
 
 /** Opens SillyTavern's left drawer (now Dials) on a tab. */
 function openDials(tab) {
+    if (tab === 'options') tab = 'recommended';
     if (!settings().takeover) setTakeover(true);
     const drawer = document.getElementById('left-nav-panel');
     if (drawer && !drawer.classList.contains('openDrawer')) document.querySelector('#ai-config-button .drawer-toggle')?.click();
@@ -656,7 +703,7 @@ async function refreshPanel(force) {
     const top = panel.querySelector('.dials-top');
     const notes = panel.querySelector('.dials-notes');
     top.replaceChildren(); notes.replaceChildren();
-    panel.querySelector('.dials-options').replaceChildren(el('div', { class: 'dials-muted', text: 'Reading options from the provider…' }));
+    panel.querySelectorAll('.dials-groups').forEach(g => g.replaceChildren(el('div', { class: 'dials-muted', text: 'Reading settings from the provider…' })));
 
     if (callers.size > 1) {
         const select = el('select', { class: 'text_pole', onchange: e => { s.view = e.target.value; save(); refreshPanel(false); } },
@@ -667,7 +714,11 @@ async function refreshPanel(force) {
     if (promptsNote) promptsNote.textContent = ctx().mainApi === 'openai' ? '' : 'The prompt list is only used with Chat Completion connections.';
     if (!conn || !conn.active) {
         current = null;
-        panel.querySelector('.dials-options').replaceChildren(el('div', { class: 'dials-muted', text: 'Provider options work with Chat Completion connections. Switch the API type to Chat Completion to use them. SillyTavern\'s own settings are in the next tab.' }));
+        restoreBlocks();
+        panel.querySelector('.dials-modelcard')?.replaceChildren();
+        panel.querySelectorAll('.dials-groups').forEach(g => g.replaceChildren());
+        panel.querySelector('.dials-groups[data-for="recommended"]').append(el('div', { class: 'dials-muted', text: 'Dials reads settings from Chat Completion connections. Switch the API type to Chat Completion to see them. SillyTavern\'s own settings for this connection are under Experts only → Other SillyTavern settings.' }));
+        panel.querySelector('.dials-st')?.setAttribute('open', '');
         renderPresetBar();
         renderTotals();
         renderPrefs();
@@ -684,12 +735,13 @@ async function refreshPanel(force) {
         el('div', { class: 'menu_button menu_button_icon', title: 'Read options and models from the provider again', onclick: () => refreshPanel(true) },
             el('i', { class: 'fa-solid fa-rotate' }), el('span', { text: 'Refresh' }))));
 
-    const from = { live: `Options read from ${schemaInfo.address}.`, bundled: `Couldn't reach the live spec; using the copy shipped with Dials (${schemaInfo.address}).`, standard: 'This endpoint has no spec Dials could read, so it shows the common OpenAI-compatible extras. Use “Add a field” for anything else.' }[schemaInfo.from];
+    const from = { live: `Settings read from ${schemaInfo.address}.`, bundled: `Couldn't reach the live spec; using the copy shipped with Dials (${schemaInfo.address}).`, standard: 'This endpoint has no spec Dials could read, so it shows the common OpenAI-compatible extras. Use “Add a field” for anything else.' }[schemaInfo.from];
     notes.append(el('div', { class: 'dials-muted', text: from }));
     if (!canSendExtras(conn.source)) {
         notes.append(el('div', { class: 'dials-note', text: `SillyTavern only forwards a fixed list of fields for ${providerName}, so options set here are not sent. To send them, use a Custom (OpenAI-compatible) connection pointed at the same provider${provider === 'openrouter' ? ' (https://openrouter.ai/api/v1)' : ''}. Token counting still works.` }));
     }
-    if (model?.maxOutput) notes.append(el('div', { class: 'dials-muted', text: `This model's output cap: ${model.maxOutput.toLocaleString('en-US')} tokens.` }));
+    for (const n of schemaInfo.notes ?? []) notes.append(el('details', { class: 'dials-providernote', open: true }, el('summary', { text: n.title }), el('div', { class: 'dials-notetext', text: n.text })));
+    renderModelCard();
 
     renderPresetBar();
     seedIfNew();
@@ -698,6 +750,33 @@ async function refreshPanel(force) {
     renderPreview();
     renderTotals();
     renderPrefs();
+}
+
+function fmtNum(x) { return typeof x === 'number' ? x.toLocaleString('en-US') : String(x); }
+
+/** "This model" card: everything the provider's model list says about the current model. */
+function renderModelCard() {
+    const box = panel.querySelector('.dials-modelcard');
+    if (!box) return;
+    const m = current?.model;
+    if (!m) {
+        box.replaceChildren(el('div', { class: 'dials-card' }, el('div', { class: 'dials-cardtitle', text: current?.conn?.model || 'No model selected' }),
+            el('div', { class: 'dials-muted', text: 'The provider\'s model list says nothing about this model (or has no model list), so there are no details to show.' })));
+        return;
+    }
+    const rows = [];
+    if (m.contextLength) rows.push(['Context size', `${fmtNum(m.contextLength)} tokens`]);
+    if (m.maxOutput) rows.push(['Longest reply', `${fmtNum(m.maxOutput)} tokens (thinking included)`]);
+    if (m.pricing) rows.push(['Price per million tokens', `in $${m.pricing.inputPerM} · out $${m.pricing.outputPerM}${m.pricing.cachedPerM !== null && m.pricing.cachedPerM !== undefined ? ` · cached in $${m.pricing.cachedPerM}` : ''}`]);
+    for (const [k, v] of Object.entries(m.facts || {})) rows.push([k[0].toUpperCase() + k.slice(1), String(v)]);
+    if (m.supported) rows.push(['Settings it accepts', [...m.supported].join(', ')]);
+    const caps = capabilityList(m.caps);
+    box.replaceChildren(el('div', { class: 'dials-card' },
+        el('div', { class: 'dials-cardtitle', text: m.name }),
+        m.description ? el('div', { class: 'dials-carddesc', text: m.description }) : null,
+        el('table', { class: 'dials-facts' }, rows.map(([k, v]) => el('tr', {}, el('th', { text: k }), el('td', { text: v })))),
+        caps.length ? el('details', { class: 'dials-caps' }, el('summary', { text: 'What this model can do' }),
+            el('table', { class: 'dials-facts' }, caps.map(([k, v]) => el('tr', {}, el('th', { text: k }), el('td', { class: v === 'no' ? 'dials-no' : '', text: v }))))) : null));
 }
 
 function currentValues() {
@@ -711,68 +790,95 @@ function setOption(key, value) {
     renderPreview();
 }
 
-function control(option) {
+function control(option, supported = true) {
     const values = currentValues();
     const value = values[option.key];
-    const def = option.default !== undefined ? ` (provider default: ${JSON.stringify(option.default)})` : '';
+    const isSet = value !== undefined;
+    const def = defaultFor(option, current?.model);
+    const defText = def ? (typeof def.value === 'boolean' ? (def.value ? 'on' : 'off') : String(def.value)) : null;
+    const choicesFor = () => option.kind === 'boolean' ? [[true, 'On'], [false, 'Off']] : allowedValues(option, current?.model).map(x => [x, String(x)]);
     let input;
     const commit = raw => {
         const r = coerceValue(option, raw);
         input.classList.toggle('dials-invalid', !r.ok);
         input.title = r.ok ? '' : r.error;
-        if (r.ok) setOption(option.key, r.value);
+        if (r.ok) { setOption(option.key, r.value); renderOptions(); }
     };
+    const unsetLabel = defText !== null ? `Default: ${defText} (not sent)` : 'Default (not sent)';
     if (option.kind === 'boolean' || option.kind === 'enum') {
-        const choices = option.kind === 'boolean' ? [[true, 'On'], [false, 'Off']] : option.enum.map(x => [x, String(x)]);
+        const choices = choicesFor();
         input = el('select', { class: 'text_pole', onchange: e => commit(e.target.value === '' ? '' : choices[Number(e.target.value)][0]) },
-            el('option', { value: '', text: `Unset${def}` }),
-            choices.map(([v, label], i) => el('option', { value: String(i), selected: value !== undefined && v === value, text: label })));
+            el('option', { value: '', text: unsetLabel }),
+            choices.map(([v, label], i) => el('option', { value: String(i), selected: isSet && v === value, text: label })));
     } else if (option.kind === 'integer' || option.kind === 'number') {
-        input = el('input', { class: 'text_pole', type: 'number', step: option.kind === 'integer' ? '1' : 'any', min: option.min, max: option.max, placeholder: `Unset${def}`, value: value ?? '', onchange: e => commit(e.target.value) });
+        input = el('input', { class: 'text_pole', type: 'number', step: option.kind === 'integer' ? '1' : 'any', min: option.min, max: option.max, placeholder: unsetLabel, value: value ?? '', onchange: e => commit(e.target.value) });
     } else if (option.kind === 'string') {
-        input = el('input', { class: 'text_pole', type: 'text', placeholder: `Unset${def}`, value: value ?? '', onchange: e => commit(e.target.value) });
+        input = el('input', { class: 'text_pole', type: 'text', placeholder: unsetLabel, value: value ?? '', onchange: e => commit(e.target.value) });
     } else {
-        input = el('textarea', { class: 'text_pole', rows: '2', placeholder: `Unset — JSON${def}`, onchange: e => commit(e.target.value) });
-        input.value = value === undefined ? '' : JSON.stringify(value);
+        input = el('textarea', { class: 'text_pole', rows: '2', placeholder: `${unsetLabel} — JSON`, onchange: e => commit(e.target.value) });
+        input.value = isSet ? JSON.stringify(value) : '';
     }
-    const clear = el('div', { class: 'menu_button menu_button_icon dials-clear', title: 'Unset (don\'t send)', onclick: () => { setOption(option.key, undefined); renderOptions(); } }, el('i', { class: 'fa-solid fa-xmark' }));
-    return el('div', { class: `dials-option${value !== undefined ? ' dials-set' : ''}` },
+    const providerName = { venice: 'Venice', openrouter: 'OpenRouter' }[current?.provider] ?? 'the provider';
+    const status = isSet
+        ? el('div', { class: 'dials-status dials-status-set', text: 'Set by you, sent with every request.' })
+        : el('div', { class: 'dials-status', text: def
+            ? `Not sent. The model uses its default: ${defText} (${def.from === 'model' ? `${providerName} lists this for this model` : `${providerName}'s documented default`}).`
+            : `Not sent. The model decides (${providerName} doesn't publish a default for this).` });
+    const clear = el('div', { class: 'menu_button menu_button_icon dials-clear', title: 'Back to the default (don\'t send)', onclick: () => { setOption(option.key, undefined); renderOptions(); } }, el('i', { class: 'fa-solid fa-rotate-left' }));
+    const note = modelNote(current?.provider, current?.conn?.model, option.key);
+    return el('div', { class: `dials-option${isSet ? ' dials-set' : ' dials-default'}${supported ? '' : ' dials-unsupported'}` },
         el('label', { class: 'dials-label', text: option.label, title: option.key }),
-        el('div', { class: 'dials-input' }, input, value !== undefined ? clear : null),
+        el('div', { class: 'dials-input' }, input, isSet ? clear : null),
+        status,
+        supported ? null : el('div', { class: 'dials-note', text: 'This model doesn\'t list this as supported.' }),
         explainField(option.key) ? el('div', { class: 'dials-explain', text: explainField(option.key) }) : null,
-        option.description ? el('details', { class: 'dials-desc' }, el('summary', { text: 'Provider\'s note' }), el('div', { text: option.description })) : null);
+        note ? el('div', { class: 'dials-note', text: note }) : null,
+        option.description ? el('div', { class: 'dials-desc' }, el('span', { class: 'dials-desc-label', text: `${providerName === 'the provider' ? 'Provider' : providerName} says: ` }), option.description) : null);
 }
 
 function renderOptions() {
-    const box = panel.querySelector('.dials-options');
+    if (!panel || !current) return;
     const s = settings();
-    const options = optionsFromSchema(current.schema);
     const values = currentValues();
-    let hidden = 0;
-    const visible = list => list.filter(o => {
-        if (o.kind === 'group') return true;
-        const ok = supportsOption(o, current.model, current.provider) !== false;
-        if (!ok && values[o.key] === undefined) { hidden++; return s.showUnsupported; }
-        return true;
+    const isChat = current.callerId === SILLYTAVERN;
+    restoreBlocks();
+    const plan = planLayout({
+        options: leaves(optionsFromSchema(current.schema)),
+        supports: o => supportsOption(o, current.model, current.provider),
+        canSend: canSendExtras(current.conn.source),
+        stPresent: isChat ? new Set(placeableStIds().filter(id => blockOf(id))) : new Set(),
+        setKeys: new Set(Object.keys(values)),
+        showUnsupported: s.showUnsupported,
     });
-    const render = list => visible(list).map(o => o.kind === 'group'
-        ? (() => { const kids = render(o.children); return kids.length ? el('details', { class: 'dials-group', open: o.children.some(c => values[c.key] !== undefined) || undefined }, el('summary', { text: o.label, title: o.description }), kids) : null; })()
-        : control(o));
-    const items = render(options);
-    box.replaceChildren(...items);
-    if (hidden) {
-        box.append(el('label', { class: 'checkbox_label dials-muted' },
+    const containers = { recommended: panel.querySelector('.dials-groups[data-for="recommended"]'), experts: panel.querySelector('.dials-groups[data-for="experts"]') };
+    containers.recommended.replaceChildren();
+    containers.experts.replaceChildren();
+    for (const g of plan.groups) {
+        const body = el('div', { class: 'dials-groupbody' });
+        const wrap = g.tab === 'recommended'
+            ? el('div', { class: 'dials-group dials-group-open' }, body)
+            : el('details', { class: 'dials-group', open: g.rows.some(r => r.type === 'field' && values[r.option.key] !== undefined) || undefined }, el('summary', { text: g.label }), body);
+        containers[g.tab].append(wrap);
+        for (const row of g.rows) {
+            if (row.type === 'field') body.append(control(row.option, row.supported));
+            else placeBlock(row.id, body);
+        }
+    }
+    if (isChat) for (const id of plan.hideSt) hideBlock(id);
+    if (!isChat) containers.recommended.prepend(el('div', { class: 'dials-note', text: `These are ${callers.get(current.callerId)?.label ?? current.callerId}'s own settings. SillyTavern's sliders apply to SillyTavern's chat; switch "Settings for" to see them.` }));
+    panel.querySelector('.dials-st')?.classList.toggle('dials-hidden', !isChat);
+    if (plan.hiddenUnsupported || s.showUnsupported) {
+        containers.experts.append(el('label', { class: 'checkbox_label dials-muted' },
             el('input', { type: 'checkbox', checked: s.showUnsupported, onchange: e => { s.showUnsupported = e.target.checked; save(); renderOptions(); } }),
-            el('span', { text: `Show ${hidden} option${hidden > 1 ? 's' : ''} this model doesn't list as supported` })));
+            el('span', { text: s.showUnsupported ? 'Showing settings this model doesn\'t list as supported' : `Show ${plan.hiddenUnsupported} setting${plan.hiddenUnsupported > 1 ? 's' : ''} this model doesn't list as supported` })));
     }
     // Copy from another caller
-    const others = [...callers.keys()].filter(id => id !== current.callerId);
-    for (const other of others) {
+    for (const other of [...callers.keys()].filter(id => id !== current.callerId)) {
         const conn = connectionOf(other);
         if (!conn) continue;
         const fromKey = keyFor(other, conn);
         if (!Object.keys(valuesFor(s.values, fromKey)).length) continue;
-        box.append(el('div', { class: 'menu_button', onclick: () => {
+        containers.experts.append(el('div', { class: 'menu_button', onclick: () => {
             if (!confirm(`Replace these settings with ${callers.get(other).label}'s settings for its current model?`)) return;
             s.values = copyValues(s.values, fromKey, current.key); save(); renderOptions(); renderExtraFields(); renderPreview();
         }, text: `Copy from ${callers.get(other).label}` }));
@@ -808,13 +914,29 @@ function renderPreview() {
     const sendable = canSendExtras(current.conn.source);
     const shown = sendable && s.requestUsage ? { ...extras, stream_options: { include_usage: true } } : extras;
     const last = lastPrepared.get(current.callerId);
+    const inherits = inheritedFrom(current.callerId);
+    let effective = shown;
+    if (inherits) {
+        const base = buildExtras(valuesFor(s.values, keyFor(inherits, current.conn)));
+        effective = mergeUserWins(shown, base).merged;
+    }
     box.replaceChildren(
+        inherits ? el('div', { class: 'dials-note', text: `${callers.get(current.callerId).label} is using ${callers.get(inherits)?.label ?? inherits}'s settings, plus the ones set here (these win where both are set).` }) : null,
+        inherits ? el('div', { class: 'dials-subhead', text: `What ${callers.get(current.callerId).label} will send in total` }) : null,
+        inherits ? el('pre', { class: 'dials-preview', text: Object.keys(effective).length ? JSON.stringify(effective, null, 2) : '(nothing)' }) : null,
         el('div', { class: 'dials-subhead', text: sendable ? 'What will be added to the request' : 'Not sent on this connection' }),
         el('pre', { class: 'dials-preview', text: Object.keys(shown).length ? JSON.stringify(shown, null, 2) : '(nothing — all options unset)' }),
         sendable && s.requestUsage ? el('div', { class: 'dials-muted', text: 'stream_options is added only for streamed replies, so the provider reports token usage.' }) : null,
         last?.result?.overridden?.length ? el('div', { class: 'dials-note', text: `Last request: your own Include Body already set ${last.result.overridden.join(', ')}, so your values were kept.` }) : null,
         last?.result?.problem ? el('div', { class: 'dials-note', text: `Last request: ${last.result.problem}` }) : null);
 }
+/** Which caller's settings this caller builds on (as reported by the caller), or null. */
+function inheritedFrom(callerId) {
+    const fn = callers.get(callerId)?.inheritsFrom;
+    if (!fn) return null;
+    try { const id = fn(); return id && id !== callerId && callers.has(id) ? id : null; } catch { return null; }
+}
+
 function renderPreviewIfOpen() { if (isOpen() && current) renderPreview(); }
 
 function sumLine(sum) {
@@ -859,10 +981,23 @@ window.Dials = Object.freeze({
      * Registers another extension as a caller with its own settings.
      * getConnection() returns {profileId?, source, url?, model, statusPayload?} for the connection it is using now.
      */
-    registerCaller(id, { label, getConnection }) {
+    registerCaller(id, { label, getConnection, inheritsFrom = null }) {
         if (typeof id !== 'string' || !id || id === SILLYTAVERN || typeof getConnection !== 'function') throw Error('Dials.registerCaller: bad arguments');
-        callers.set(id, { label: String(label || id), getConnection });
+        callers.set(id, { label: String(label || id), getConnection, inheritsFrom: typeof inheritsFrom === 'function' ? inheritsFrom : null });
         if (isOpen()) refreshPanel(false);
+    },
+    /**
+     * Opens the Dials panel showing a caller's settings ("Settings for:" set to it).
+     * Unknown callers fall back to SillyTavern's chat. Returns true if the panel could be opened.
+     */
+    open(callerId = SILLYTAVERN) {
+        const s = settings();
+        s.view = callers.has(callerId) ? callerId : SILLYTAVERN;
+        save();
+        openDials('options');
+        if (!shell) return false;
+        refreshPanel(false);
+        return true;
     },
     /**
      * Adds the caller's options to a chat-completions payload (mutates it; only custom_include_body changes)

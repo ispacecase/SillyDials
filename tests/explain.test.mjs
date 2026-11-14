@@ -21,3 +21,11 @@ test('lookups fall back to null', () => {
     assert.match(explainSillyTavern('Context Size (tokens)'), /chat/);
     assert.equal(explainSillyTavern('nope'), null);
 });
+
+test('tested model notes apply only to their model and option', async () => {
+    const { modelNote } = await import('../src/explain.mjs');
+    assert.match(modelNote('venice', 'deepseek-v4-1-flash-1017-uncensored', 'reasoning_effort'), /ignores "low"/);
+    assert.match(modelNote('venice', 'deepseek-v4-1-flash-1017-uncensored', 'reasoning.effort'), /ignores "low"/);
+    assert.equal(modelNote('venice', 'deepseek-v4-pro', 'reasoning_effort'), null);
+    assert.equal(modelNote('venice', 'deepseek-v4-1-flash-1017-uncensored', 'top_k'), null);
+});

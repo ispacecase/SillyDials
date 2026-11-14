@@ -24,7 +24,7 @@ export function normalizeModels(list, provider) {
     for (const m of rows) {
         const id = typeof m === 'string' ? m : m?.id;
         if (typeof id !== 'string' || !id) continue;
-        const model = { id, name: id, contextLength: null, maxOutput: null, pricing: null, caps: null, supported: null };
+        const model = { id, name: id, contextLength: null, maxOutput: null, pricing: null, caps: null, supported: null, description: '', facts: {}, constraints: null };
         if (typeof m === 'object') {
             if (m.model_spec && typeof m.model_spec === 'object') { // Venice shape, recognised wherever it comes from
                 const s = m.model_spec;
@@ -32,12 +32,17 @@ export function normalizeModels(list, provider) {
                 model.contextLength = num(s.availableContextTokens) ?? num(m.context_length);
                 model.maxOutput = num(s.maxCompletionTokens);
                 model.caps = s.capabilities && typeof s.capabilities === 'object' ? { ...s.capabilities } : null;
+                model.description = String(s.description || '');
+                model.constraints = s.constraints && typeof s.constraints === 'object' ? s.constraints : null;
+                model.facts = pickFacts({ privacy: s.privacy, traits: s.traits, uncensored: s.uncensored, beta: s.betaModel, offline: s.offline, deprecation: s.deprecation, source: s.modelSource });
                 const p = s.pricing;
                 if (p && num(p.input?.usd) !== null && num(p.output?.usd) !== null) {
                     model.pricing = { inputPerM: num(p.input.usd), outputPerM: num(p.output.usd), cachedPerM: num(p.cache_input?.usd) };
                 }
             } else {
                 model.name = m.name || id;
+                model.description = String(m.description || '');
+                model.facts = pickFacts({ ...m, id: undefined, name: undefined, description: undefined, pricing: undefined, supported_parameters: undefined, top_provider: undefined, context_length: undefined });
                 model.contextLength = num(m.context_length);
                 model.maxOutput = num(m.top_provider?.max_completion_tokens) ?? num(m.max_completion_tokens);
                 if (Array.isArray(m.supported_parameters)) model.supported = new Set(m.supported_parameters);
@@ -50,6 +55,84 @@ export function normalizeModels(list, provider) {
         out.set(id, model);
     }
     return out;
+}
+
+/** Keeps the simple facts a model list gives (text, numbers, yes/no, short lists) for the model card. */
+function pickFacts(obj) {
+    const out = {};
+    for (const [k, v] of Object.entries(obj || {})) {
+        if (v === undefined || v === null || v === '') continue;
+        if (['string', 'number', 'boolean'].includes(typeof v)) out[k] = v;
+        else if (Array.isArray(v) && v.length && v.every(x => ['string', 'number'].includes(typeof x))) out[k] = v.join(', ');
+        else if (Array.isArray(v) && !v.length) continue;
+        else if (v && typeof v === 'object') {
+            const flat = Object.entries(v).filter(([, x]) => ['string', 'number', 'boolean'].includes(typeof x));
+            if (flat.length) out[k] = flat.map(([a, b]) => `${a}: ${b}`).join(', ');
+        }
+    }
+    return out;
+}
+
+/** Plain words for Venice capability flags. */
+export const CAPABILITY_LABELS = Object.freeze({
+    supportsReasoning: 'Thinks before answering',
+    supportsReasoningEffort: 'Thinking effort can be changed',
+    reasoningEffortOptions: 'Thinking effort choices',
+    defaultReasoningEffort: 'Default thinking effort',
+    supportsWebSearch: 'Web search',
+    supportsXSearch: 'X (Twitter) search',
+    supportsVision: 'Understands images',
+    supportsMultipleImages: 'Several images at once',
+    maxImages: 'Most images per message',
+    supportsAudioInput: 'Understands audio',
+    supportsVideoInput: 'Understands video',
+    maxVideos: 'Most videos per message',
+    supportsFunctionCalling: 'Tool use (function calling)',
+    supportsResponseSchema: 'Structured (JSON) output',
+    supportsLogProbs: 'Word probabilities (debugging)',
+    supportsE2EE: 'End-to-end encryption',
+    supportsTeeAttestation: 'Runs in a verified secure enclave',
+    optimizedForCode: 'Tuned for code',
+    quantization: 'Quantization (compression)',
+});
+
+/** Capability flags as [label, value-in-words] pairs, in a stable order. */
+export function capabilityList(caps) {
+    if (!caps) return [];
+    const words = v => v === true ? 'yes' : v === false ? 'no' : Array.isArray(v) ? v.join(', ') : String(v);
+    const known = Object.keys(CAPABILITY_LABELS).filter(k => k in caps).map(k => [CAPABILITY_LABELS[k], words(caps[k])]);
+    const other = Object.keys(caps).filter(k => !(k in CAPABILITY_LABELS)).map(k => [k, words(caps[k])]);
+    return [...known, ...other];
+}
+
+const EFFORT_KEYS = ['reasoning_effort', 'reasoning.effort'];
+
+/**
+ * The model's default for an option, with where it came from, or null when nobody publishes one.
+ * Order: the model's own published default, then the spec's default.
+ * @returns {{value: any, from: 'model' | 'spec'} | null}
+ */
+export function defaultFor(option, model) {
+    if (model?.caps && EFFORT_KEYS.includes(option.key) && model.caps.defaultReasoningEffort !== undefined) return { value: model.caps.defaultReasoningEffort, from: 'model' };
+    const c = model?.constraints?.[option.key];
+    if (c && c.default !== undefined && c.default !== null) return { value: c.default, from: 'model' };
+    if (option.default !== undefined && option.default !== null) return { value: option.default, from: 'spec' };
+    return null;
+}
+
+/** The model's own default for one of SillyTavern's request fields (temperature, top_p, …), or null. */
+export function modelDefaultForField(model, field) {
+    const c = model?.constraints?.[field];
+    return c && c.default !== undefined && c.default !== null ? c.default : null;
+}
+
+/** Narrows an enum option to the values this model accepts (Venice reasoningEffortOptions). */
+export function allowedValues(option, model) {
+    if (option.kind !== 'enum') return option.enum;
+    const allowed = EFFORT_KEYS.includes(option.key) ? model?.caps?.reasoningEffortOptions : null;
+    if (!Array.isArray(allowed) || !allowed.length) return option.enum;
+    const narrowed = option.enum.filter(v => allowed.includes(v));
+    return narrowed.length ? narrowed : option.enum;
 }
 
 /** Venice option -> capability it needs. Keys match option keys; a group key covers its children. */

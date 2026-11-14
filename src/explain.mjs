@@ -68,12 +68,42 @@ export const SILLYTAVERN_EXPLANATIONS = Object.freeze({
     'Verbosity': FIELD_EXPLANATIONS.verbosity,
 });
 
+/** SillyTavern controls whose block has no titled heading, by element id. */
+export const ST_CONTROL_EXPLANATIONS = Object.freeze({
+    openai_show_thoughts: 'Show the model\'s thinking in the chat (folded above the reply). Off hides it; the model still thinks.',
+    stream_toggle: 'Show the reply word by word as it\'s written, instead of all at once at the end.',
+    openai_reasoning_effort: SILLYTAVERN_EXPLANATIONS['Reasoning Effort'],
+    openai_verbosity: FIELD_EXPLANATIONS.verbosity,
+    openai_enable_web_search: 'Let the model search the web, on connections where SillyTavern supports it.',
+});
+
 /** Plain explanation for a provider option, or null. */
 export function explainField(key) {
     return FIELD_EXPLANATIONS[key] ?? null;
 }
 
+/** Plain explanation for a SillyTavern control that has no titled heading, by element id, or null. */
+export function explainStControl(id) {
+    return ST_CONTROL_EXPLANATIONS[id] ?? null;
+}
+
 /** Plain explanation for one of SillyTavern's own settings, by its title key, or null. */
 export function explainSillyTavern(titleKey) {
     return SILLYTAVERN_EXPLANATIONS[titleKey] ?? null;
+}
+
+/**
+ * Things seen in real use that the provider doesn't say. Each note names where it came from.
+ * provider + model + option keys it applies to.
+ */
+export const MODEL_NOTES = Object.freeze([
+    {
+        provider: 'venice', model: 'deepseek-v4-1-flash-1017-uncensored', keys: ['reasoning_effort', 'reasoning.effort'],
+        text: 'Seen in testing (Storyloom, 2026-11-14): this model ignores "low". It thought up to the 12,000-token limit and wrote no reply. "none" works (no thinking, normal reply). Don\'t rely on "low" here.',
+    },
+]);
+
+/** A tested note for this provider/model/option, or null. */
+export function modelNote(provider, model, key) {
+    return MODEL_NOTES.find(n => n.provider === provider && n.model === model && n.keys.includes(key))?.text ?? null;
 }

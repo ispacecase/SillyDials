@@ -183,3 +183,21 @@ export function coerceValue(option, input) {
             try { return { ok: true, value: JSON.parse(input) }; } catch { return { ok: false, error: 'Enter valid JSON.' }; }
     }
 }
+
+/**
+ * Explanatory text the spec gives that isn't a setting: the API's own description and guidance,
+ * and the chat endpoint's summary and description. Returns [{title, text}].
+ */
+export function providerNotes(spec) {
+    const out = [];
+    const add = (title, text) => { const t = String(text ?? '').trim(); if (t && !out.some(n => n.text === t)) out.push({ title, text: t }); };
+    add('About this API', spec?.info?.description);
+    add('Provider guidance', spec?.info?.['x-guidance']);
+    const paths = spec?.paths && typeof spec.paths === 'object' ? spec.paths : {};
+    const key = Object.keys(paths).find(p => /(^|\/)chat\/completions\/?$/.test(p));
+    const op = key && paths[key]?.post;
+    if (op) {
+        add('Chat requests', [op.summary, op.description].filter(Boolean).join('\n\n'));
+    }
+    return out;
+}
