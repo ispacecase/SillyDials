@@ -66,3 +66,4 @@ Short entries, newest last. "Pending" = proposed, waiting for the owner's yes.
 - **Decided (owner yes, 2026-11-14):** merge thinking into one Thinking control + one "Show thinking in chat" switch, as proposed above.
 - **Verified on real Venice (2026-11-14):** one Thinking control (Off/Low/High/Max for deepseek-v4-1-flash-1017-uncensored, default High) and one "Show thinking in chat" switch; no other thinking switches. Thinking Off → reply with 0 thinking tokens. Vague names renamed (Thinking summary, Hide thinking from the reply (still thinks), Venice's own system prompt, Web search, Prompt caching).
 - **Decided (owner, 2026-11-14):** license AGPL-3.0, matching SillyTavern (Dials imports SillyTavern's own modules). LICENSE is the standard text copied from SillyTavern's repo.
+- **2026-11-14:** owner added assets/dials-readme-banner.png (README banner) and assets/dials-logo.png. Banner used at the top of the README.

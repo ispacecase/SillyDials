@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/dials-readme-banner.png" alt="Dials" width="100%"></p>
+
 # Dials
 
 **Every setting your AI provider offers, explained in plain words, plus the real token count for every reply.**
