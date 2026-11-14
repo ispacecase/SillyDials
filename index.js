@@ -13,7 +13,7 @@ import { SILLYTAVERN, connectionKey, settingsKey, valuesFor, setValue, copyValue
 import { CONCEPTS, BUILTIN_PRESETS, resolvePreset, allPresets, makeUserPreset } from './src/presets.mjs';
 import { explainField, explainSillyTavern, explainStControl, modelNote, labelFor } from './src/explain.mjs';
 
-const VERSION = '0.2.2';
+const VERSION = '0.2.3';
 const MODULE = 'dials';
 const GENERATE_URL = '/api/backends/chat-completions/generate';
 const TAG_FIELD = 'dials_tag';
@@ -511,10 +511,38 @@ function takeOver() {
     addExplanations(shell.querySelector('.dials-st'));
     panel = shell;
     document.querySelector('#ai-config-button .drawer-toggle')?.addEventListener('click', onDrawerToggle);
+    // However the drawer gets opened (click, pin, another extension), re-read the connection when it becomes visible.
+    drawerObserver?.disconnect();
+    drawerObserver = new MutationObserver(() => {
+        const open = drawer.classList.contains('openDrawer');
+        if (open && !drawerWasOpen) onDrawerToggle();
+        drawerWasOpen = open;
+    });
+    drawerWasOpen = drawer.classList.contains('openDrawer');
+    drawerObserver.observe(drawer, { attributes: true, attributeFilter: ['class'] });
     const tab = settings().tab;
     showTab(['recommended', 'experts', 'prompts', 'tokens'].includes(tab) ? tab : 'recommended');
     refreshPanel(false);
 }
+
+/** Which caller/connection/model the panel is showing; the panel is rebuilt whenever this changes. */
+let shownConnection = null;
+
+function connectionSignature() {
+    const s = settings();
+    const callerId = callers.has(s.view) ? s.view : SILLYTAVERN;
+    const conn = connectionOf(callerId);
+    return conn ? `${conn.active}|${keyFor(callerId, conn)}` : 'none';
+}
+
+/** Rebuilds the panel when the model, source, endpoint or profile changed, whether or not it's on screen. */
+function checkConnection() {
+    if (!panel) return;
+    if (connectionSignature() !== shownConnection) refreshPanel(false);
+}
+
+let drawerObserver = null;
+let drawerWasOpen = false;
 
 function onDrawerToggle() {
     setTimeout(() => { if (isOpen()) { refreshPanel(false); if (settings().tab === 'prompts') refreshPromptCounts(); } }, 50);
@@ -523,6 +551,8 @@ function onDrawerToggle() {
 function giveBack() {
     if (!shell) return;
     document.querySelector('#ai-config-button .drawer-toggle')?.removeEventListener('click', onDrawerToggle);
+    drawerObserver?.disconnect();
+    drawerObserver = null;
     restoreBlocks();
     document.querySelectorAll('.dials-explain, .dials-st-note, .dials-relabel').forEach(x => x.remove());
     restoreMoved();
@@ -562,7 +592,7 @@ function buildExtensionsSwitch() {
     host.append(switchBox);
 }
 
-const isOpen = () => !!panel && panel.offsetParent !== null;
+const isOpen = () => !!panel && (panel.offsetParent !== null || !!document.getElementById('left-nav-panel')?.classList.contains('openDrawer'));
 
 // ---------- presets ----------
 
@@ -721,6 +751,7 @@ function renderTokenBar() {
 
 async function refreshPanel(force) {
     if (!panel) return;
+    shownConnection = connectionSignature();
     const s = settings();
     if (!callers.has(s.view)) s.view = SILLYTAVERN;
     const callerId = s.view;
@@ -755,8 +786,8 @@ async function refreshPanel(force) {
     const providerName = { venice: 'Venice', openrouter: 'OpenRouter', generic: conn.source === 'custom' ? 'Custom endpoint' : conn.source }[provider];
     top.append(el('div', { class: 'dials-row dials-conn' },
         el('span', { text: `${providerName} · ${model?.name ?? conn.model ?? 'no model'}${conn.profileId ? ' · profile' : ''}` }),
-        el('div', { class: 'menu_button menu_button_icon', title: 'Read options and models from the provider again', onclick: () => refreshPanel(true) },
-            el('i', { class: 'fa-solid fa-rotate' }), el('span', { text: 'Refresh' }))));
+        el('div', { class: 'menu_button menu_button_icon', title: 'Download the provider\'s settings and model list again. You don\'t need this when switching models; Dials follows those by itself. Use it if the provider added new models or settings today.', onclick: () => refreshPanel(true) },
+            el('i', { class: 'fa-solid fa-cloud-arrow-down' }), el('span', { text: 'Re-download' }))));
 
     const from = { live: `Settings read from ${schemaInfo.address}.`, bundled: `Couldn't reach the live spec; using the copy shipped with Dials (${schemaInfo.address}).`, standard: 'This endpoint has no spec Dials could read, so it shows the common OpenAI-compatible extras. Use “Add a field” for anything else.' }[schemaInfo.from];
     notes.append(el('div', { class: 'dials-muted', text: from }));
@@ -1091,7 +1122,7 @@ window.Dials = Object.freeze({
         eventSource.on(ev, () => setTimeout(() => { renderAllMessages(); renderTotalsIfOpen(); }, 0));
     }
     for (const ev of [eventTypes.CHATCOMPLETION_SOURCE_CHANGED, eventTypes.CHATCOMPLETION_MODEL_CHANGED, eventTypes.CONNECTION_PROFILE_LOADED, eventTypes.MAIN_API_CHANGED]) {
-        if (ev) eventSource.on(ev, () => setTimeout(() => { if (isOpen()) refreshPanel(false); }, 0));
+        if (ev) eventSource.on(ev, () => setTimeout(checkConnection, 0));
     }
     buildExtensionsSwitch();
     buildTokenBar();
@@ -1101,8 +1132,10 @@ window.Dials = Object.freeze({
     let modelTimer = null;
     $(document).on('input change', '#custom_model_id, #model_custom_select', () => {
         clearTimeout(modelTimer);
-        modelTimer = setTimeout(() => { if (isOpen()) refreshPanel(false); }, 600);
+        modelTimer = setTimeout(checkConnection, 400);
     });
+    // SillyTavern saves its settings after any connection change; catch anything the events above miss.
+    eventSource.on(eventTypes.SETTINGS_UPDATED ?? 'settings_updated', () => setTimeout(checkConnection, 0));
     eventSource.on(eventTypes.SETTINGS_UPDATED ?? 'settings_updated', () => { if (shell) addExplanations(shell.querySelector('.dials-st')); });
     console.info(`[Dials] ${VERSION} loaded`);
 })();

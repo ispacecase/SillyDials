@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.2.3
+- Dials follows model, source and profile changes by itself; no need to press anything. The old Refresh button is now **Re-download**, only for fetching the provider's lists again.
+
 ## 0.2.2
 - The Prompts tab now shows each prompt's token count as soon as you open it (worked out without sending anything).
 - The in-app icon uses the no-glow logo.

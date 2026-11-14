@@ -8,7 +8,7 @@ To switch back to SillyTavern's own panel: **Extensions → Dials → untick "Di
 
 ## The top of the panel
 
-- **Connection line**: the provider and model you're using (e.g. *Venice · DeepSeek V4 Pro*), and **Refresh**, which reads the provider's settings and model list again. Dials keeps them for 24 hours otherwise.
+- **Connection line**: the provider and model you're using (e.g. *Venice · DeepSeek V4 Pro*). It follows your connection by itself: switch models, sources or profiles and Dials updates straight away. **Re-download** fetches the provider's settings and model list again (Dials keeps them for 24 hours); you only need it if the provider added something new today.
 - **Settings for**: only appears when another extension (such as Storyloom) uses Dials. Each one has its own separate settings.
 - **Use case**: presets (see below), with **Apply**, **Undo** and **Save as mine**.
 
