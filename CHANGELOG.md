@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2
+- The Prompts tab now shows each prompt's token count as soon as you open it (worked out without sending anything).
+- The in-app icon uses the no-glow logo.
+
 ## 0.2.1
 - **One Thinking control** replaces the provider's overlapping thinking switches (`reasoning_effort`, `reasoning.effort`, `reasoning.enabled`, Venice `disable_thinking`). It offers *Off* plus only the levels the model accepts, and Dials writes only the field the model understands.
 - SillyTavern's "Request model reasoning" now reads **Show thinking in chat**, with an explanation that it only hides the thinking.

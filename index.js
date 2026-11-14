@@ -2,6 +2,7 @@
 // plus a real token counter from the provider's usage data.
 import { saveChatDebounced } from '../../../../script.js';
 import { yaml, localforage } from '../../../../lib.js';
+import { promptManager } from '../../../openai.js';
 import { chatRequestSchema, optionsFromSchema, leaves, coerceValue, specCandidates, providerNotes, OPENAI_FALLBACK_SCHEMA } from './src/spec.mjs';
 import { detectProvider, normalizeModels, supportsOption, canSendExtras, defaultFor, allowedValues, capabilityList, modelDefaultForField } from './src/models.mjs';
 import { planLayout, placeableStIds } from './src/layout.mjs';
@@ -12,7 +13,7 @@ import { SILLYTAVERN, connectionKey, settingsKey, valuesFor, setValue, copyValue
 import { CONCEPTS, BUILTIN_PRESETS, resolvePreset, allPresets, makeUserPreset } from './src/presets.mjs';
 import { explainField, explainSillyTavern, explainStControl, modelNote, labelFor } from './src/explain.mjs';
 
-const VERSION = '0.2.1';
+const VERSION = '0.2.2';
 const MODULE = 'dials';
 const GENERATE_URL = '/api/backends/chat-completions/generate';
 const TAG_FIELD = 'dials_tag';
@@ -464,6 +465,20 @@ function showTab(name) {
     shell.querySelectorAll('.dials-tab-button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
     shell.querySelectorAll('.dials-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
     if (name === 'tokens') renderTotals();
+    if (name === 'prompts') refreshPromptCounts();
+}
+
+/**
+ * SillyTavern only fills in the prompt list's token counts when it builds a prompt (sending, or editing a prompt).
+ * Opening the Prompts tab asks it to build one without sending anything (its own "dry run"), so the counts show.
+ */
+function refreshPromptCounts() {
+    const note = panel?.querySelector('.dials-prompts-note');
+    const c = ctx();
+    if (c.mainApi !== 'openai') { if (note) note.textContent = 'The prompt list is only used with Chat Completion connections.'; return; }
+    if (c.characterId === undefined && !c.groupId) { if (note) note.textContent = 'Open a chat with a character to see how many tokens each prompt uses.'; return; }
+    if (note) note.textContent = 'Token counts are worked out without sending anything to the AI.';
+    try { promptManager?.render(true); } catch (e) { console.warn('[Dials] could not count prompt tokens', e); }
 }
 
 function takeOver() {
@@ -502,7 +517,7 @@ function takeOver() {
 }
 
 function onDrawerToggle() {
-    setTimeout(() => { if (isOpen()) refreshPanel(false); }, 50);
+    setTimeout(() => { if (isOpen()) { refreshPanel(false); if (settings().tab === 'prompts') refreshPromptCounts(); } }, 50);
 }
 
 function giveBack() {
@@ -720,8 +735,6 @@ async function refreshPanel(force) {
             [...callers].map(([id, c]) => el('option', { value: id, selected: id === callerId, text: c.label })));
         top.append(el('label', { class: 'dials-row' }, el('span', { text: 'Settings for' }), select));
     }
-    const promptsNote = panel.querySelector('.dials-prompts-note');
-    if (promptsNote) promptsNote.textContent = ctx().mainApi === 'openai' ? '' : 'The prompt list is only used with Chat Completion connections.';
     if (!conn || !conn.active) {
         current = null;
         restoreBlocks();
@@ -1083,7 +1096,7 @@ window.Dials = Object.freeze({
     buildExtensionsSwitch();
     buildTokenBar();
     if (settings().takeover) takeOver();
-    eventSource.on(eventTypes.CHAT_CHANGED, () => setTimeout(renderTokenBar, 0));
+    eventSource.on(eventTypes.CHAT_CHANGED, () => setTimeout(() => { renderTokenBar(); if (isOpen() && settings().tab === 'prompts') refreshPromptCounts(); }, 0));
     // Custom endpoints: the model is typed in, which SillyTavern doesn't announce as an event.
     let modelTimer = null;
     $(document).on('input change', '#custom_model_id, #model_custom_select', () => {

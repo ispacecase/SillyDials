@@ -7,7 +7,7 @@ const dials = window.Dials; // undefined when Dials isn't installed
 ```
 
 ## `version`
-String, e.g. `"0.2.1"`.
+String, e.g. `"0.2.2"`.
 
 ## `registerCaller(id, { label, getConnection, inheritsFrom? })`
 Registers your extension as a caller. Its settings are kept separately from SillyTavern's chat, and a **Settings for** picker appears in Dials.
