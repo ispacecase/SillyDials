@@ -78,3 +78,8 @@
 #dials-shell .dials-groupbody > .range-block,
 #dials-shell .dials-groupbody > [data-source] { background: var(--dials-card); border: 1px solid var(--dials-line); border-radius: 10px; padding: 8px 10px; margin: 6px 0; width: auto; }
 #dials-shell .dials-groupbody > .range-block .range-block-title { font-weight: 600; }
+
+/* ---------- logo ---------- */
+.dials-icon { display: inline-block; object-fit: contain; vertical-align: middle; }
+#dials-shell .dials-icon-brand { width: 1.6em; height: 1.6em; }
+#dials-tokenbar .dials-icon-bar { width: 1.3em; height: 1.3em; }

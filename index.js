@@ -19,6 +19,8 @@ const TAG_FIELD = 'dials_tag';
 const CACHE_HOURS = 24;
 const VENICE_SPEC_URL = 'https://docs.venice.ai/swagger.yaml';
 const BASE = new URL('.', import.meta.url);
+const ICON_URL = new URL('assets/dials-icon.png', BASE).href;
+const icon = cls => el('img', { class: `dials-icon ${cls}`, src: ICON_URL, alt: '' });
 
 const DEFAULTS = Object.freeze({ takeover: true, tab: 'recommended', preset: 'default', userPresets: [], undo: null, seen: {}, values: {}, totals: {}, showCost: false, requestUsage: true, nearAt: 0.9, showUnsupported: false, view: SILLYTAVERN });
 
@@ -473,7 +475,7 @@ function takeOver() {
     const tabs = [['recommended', 'Recommended', 'fa-star'], ['experts', 'Experts only', 'fa-flask'], ['prompts', 'Prompts', 'fa-list'], ['tokens', 'Tokens', 'fa-coins']];
     shell = el('div', { id: 'dials-shell', class: 'dials-settings scrollableInner' },
         el('div', { class: 'dials-head' },
-            el('div', { class: 'dials-brand' }, el('i', { class: 'fa-solid fa-gauge-high' }), el('span', { text: 'Dials' })),
+            el('div', { class: 'dials-brand' }, icon('dials-icon-brand'), el('span', { text: 'Dials' })),
             el('div', { class: 'dials-top' })),
         el('div', { class: 'dials-presetbar' }),
         el('div', { class: 'dials-tabbar' }, tabs.map(([id, label, icon]) => el('button', { class: 'dials-tab-button', 'data-tab': id, type: 'button', onclick: () => showTab(id) }, el('i', { class: `fa-solid ${icon}` }), el('span', { text: label })))),
@@ -699,7 +701,7 @@ function renderTokenBar() {
     else if (last?.limit?.level === 'cut') parts.push(el('span', { class: 'dials-warn-text', text: '⚠ Last reply hit the limit' }));
     else if (last?.limit?.level === 'near') parts.push(el('span', { class: 'dials-warn-text', text: `⚠ Near the limit (${Math.round(last.limit.ratio * 100)}%)` }));
     if (!parts.length) parts.push(el('span', { class: 'dials-muted', text: 'Tokens: no replies counted yet' }));
-    tokenBar.replaceChildren(el('i', { class: 'fa-solid fa-gauge-high' }), ...parts);
+    tokenBar.replaceChildren(icon('dials-icon-bar'), ...parts);
 }
 
 async function refreshPanel(force) {
