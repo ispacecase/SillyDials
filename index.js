@@ -5,13 +5,14 @@ import { yaml, localforage } from '../../../../lib.js';
 import { chatRequestSchema, optionsFromSchema, leaves, coerceValue, specCandidates, providerNotes, OPENAI_FALLBACK_SCHEMA } from './src/spec.mjs';
 import { detectProvider, normalizeModels, supportsOption, canSendExtras, defaultFor, allowedValues, capabilityList, modelDefaultForField } from './src/models.mjs';
 import { planLayout, placeableStIds } from './src/layout.mjs';
+import { thinkingInfo, readThinking, writeThinking } from './src/thinking.mjs';
 import { buildExtras, applyExtras, mergeUserWins } from './src/extras.mjs';
 import { createStreamReader, readJsonReply, limitStatus, costOf, addToTotals, pruneDays, usageLine, formatCost, dayOf } from './src/usage.mjs';
 import { SILLYTAVERN, connectionKey, settingsKey, valuesFor, setValue, copyValues } from './src/keys.mjs';
 import { CONCEPTS, BUILTIN_PRESETS, resolvePreset, allPresets, makeUserPreset } from './src/presets.mjs';
-import { explainField, explainSillyTavern, explainStControl, modelNote } from './src/explain.mjs';
+import { explainField, explainSillyTavern, explainStControl, modelNote, labelFor } from './src/explain.mjs';
 
-const VERSION = '0.2.0';
+const VERSION = '0.2.1';
 const MODULE = 'dials';
 const GENERATE_URL = '/api/backends/chat-completions/generate';
 const TAG_FIELD = 'dials_tag';
@@ -433,6 +434,13 @@ function placeBlock(id, target) {
     node.before(marker);
     target.append(node);
     blockMoves.push({ node, marker });
+    const relabel = { openai_show_thoughts: 'Show thinking in chat' }[id];
+    const label = relabel ? document.getElementById(id)?.closest('label') : null;
+    if (label) {
+        const own = label.querySelector('span:not(.dials-relabel)');
+        if (own) { own.classList.add('dials-hidden'); hiddenBlocks.push(own); }
+        if (!label.querySelector('.dials-relabel')) label.append(el('span', { class: 'dials-relabel', text: relabel }));
+    }
     const text = explainStControl(id);
     if (text && !node.querySelector(':scope > .dials-explain')) node.append(el('div', { class: 'dials-explain', text }));
     const field = { temp_openai: 'temperature', top_p_openai: 'top_p' }[id];
@@ -499,7 +507,7 @@ function giveBack() {
     if (!shell) return;
     document.querySelector('#ai-config-button .drawer-toggle')?.removeEventListener('click', onDrawerToggle);
     restoreBlocks();
-    document.querySelectorAll('.dials-explain, .dials-st-note').forEach(x => x.remove());
+    document.querySelectorAll('.dials-explain, .dials-st-note, .dials-relabel').forEach(x => x.remove());
     restoreMoved();
     document.querySelector('#left-nav-panel > .scrollableInner.dials-hidden')?.classList.remove('dials-hidden');
     document.getElementById('clickSlidersTips')?.classList.remove('dials-hidden');
@@ -827,7 +835,7 @@ function control(option, supported = true) {
     const clear = el('div', { class: 'menu_button menu_button_icon dials-clear', title: 'Back to the default (don\'t send)', onclick: () => { setOption(option.key, undefined); renderOptions(); } }, el('i', { class: 'fa-solid fa-rotate-left' }));
     const note = modelNote(current?.provider, current?.conn?.model, option.key);
     return el('div', { class: `dials-option${isSet ? ' dials-set' : ' dials-default'}${supported ? '' : ' dials-unsupported'}` },
-        el('label', { class: 'dials-label', text: option.label, title: option.key }),
+        el('label', { class: 'dials-label', text: labelFor(option), title: option.key }),
         el('div', { class: 'dials-input' }, input, isSet ? clear : null),
         status,
         supported ? null : el('div', { class: 'dials-note', text: 'This model doesn\'t list this as supported.' }),
@@ -836,15 +844,50 @@ function control(option, supported = true) {
         option.description ? el('div', { class: 'dials-desc' }, el('span', { class: 'dials-desc-label', text: `${providerName === 'the provider' ? 'Provider' : providerName} says: ` }), option.description) : null);
 }
 
+/** The one Thinking control: Off or a level this model accepts. Writes only the field(s) this model understands. */
+function thinkingControl(info) {
+    const values = currentValues();
+    const choice = readThinking(values);
+    const isSet = choice !== undefined;
+    const providerName = { venice: 'Venice', openrouter: 'OpenRouter' }[current?.provider] ?? 'the provider';
+    const word = v => v === 'off' ? 'Off' : v[0].toUpperCase() + v.slice(1);
+    const choices = [...(info.canTurnOff ? ['off'] : []), ...info.levels];
+    const unsetLabel = info.default ? `Default: ${word(info.default)} (not sent)` : 'Default (not sent)';
+    const select = el('select', { class: 'text_pole', onchange: e => {
+        const s = settings();
+        const next = writeThinking(valuesFor(s.values, current.key), e.target.value || undefined, info);
+        s.values = { ...(s.values || {}) };
+        if (Object.keys(next).length) s.values[current.key] = next; else delete s.values[current.key];
+        save(); renderOptions(); renderPreview();
+    } },
+        el('option', { value: '', text: unsetLabel }),
+        choices.map(v => el('option', { value: v, selected: v === choice, text: word(v) })));
+    const sentAs = isSet ? Object.entries(buildExtras(writeThinking({}, choice, info))).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join(', ') : '';
+    const status = isSet
+        ? `Set by you, sent as ${sentAs.replace(/[{}"]/g, '')}.`
+        : info.default ? `Not sent. The model uses its default: ${word(info.default)} (${info.defaultFrom === 'model' ? `${providerName} lists this for this model` : `${providerName}'s documented default`}).` : `Not sent. The model decides (${providerName} doesn't publish a default for this).`;
+    const note = modelNote(current?.provider, current?.conn?.model, info.levelField ?? 'reasoning_effort');
+    const clear = el('div', { class: 'menu_button menu_button_icon dials-clear', title: 'Back to the default (don\'t send)', onclick: () => { select.value = ''; select.dispatchEvent(new Event('change')); } }, el('i', { class: 'fa-solid fa-rotate-left' }));
+    return el('div', { class: `dials-option${isSet ? ' dials-set' : ' dials-default'}` },
+        el('label', { class: 'dials-label', text: 'Thinking' }),
+        el('div', { class: 'dials-input' }, select, isSet ? clear : null),
+        el('div', { class: `dials-status${isSet ? ' dials-status-set' : ''}`, text: status }),
+        el('div', { class: 'dials-explain', text: `Whether the model thinks before answering, and how hard. Off is fastest and cheapest; higher levels are more careful but slower and use more tokens.${info.levels.length ? '' : ' This model can only turn thinking on or off.'} Whether you see the thinking is the "Show thinking in chat" switch.` }),
+        note ? el('div', { class: 'dials-note', text: note }) : null);
+}
+
 function renderOptions() {
     if (!panel || !current) return;
     const s = settings();
     const values = currentValues();
     const isChat = current.callerId === SILLYTAVERN;
     restoreBlocks();
+    const leafOptions = leaves(optionsFromSchema(current.schema));
+    const supportsFn = o => supportsOption(o, current.model, current.provider);
     const plan = planLayout({
-        options: leaves(optionsFromSchema(current.schema)),
-        supports: o => supportsOption(o, current.model, current.provider),
+        options: leafOptions,
+        supports: supportsFn,
+        thinking: thinkingInfo(leafOptions, current.model, supportsFn),
         canSend: canSendExtras(current.conn.source),
         stPresent: isChat ? new Set(placeableStIds().filter(id => blockOf(id))) : new Set(),
         setKeys: new Set(Object.keys(values)),
@@ -861,6 +904,7 @@ function renderOptions() {
         containers[g.tab].append(wrap);
         for (const row of g.rows) {
             if (row.type === 'field') body.append(control(row.option, row.supported));
+            else if (row.type === 'thinking') body.append(thinkingControl(row.info));
             else placeBlock(row.id, body);
         }
     }

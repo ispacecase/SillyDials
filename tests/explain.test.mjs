@@ -29,3 +29,9 @@ test('tested model notes apply only to their model and option', async () => {
     assert.equal(modelNote('venice', 'deepseek-v4-pro', 'reasoning_effort'), null);
     assert.equal(modelNote('venice', 'deepseek-v4-1-flash-1017-uncensored', 'top_k'), null);
 });
+
+test('vague spec names get clearer labels; others keep theirs', async () => {
+    const { labelFor } = await import('../src/explain.mjs');
+    assert.equal(labelFor({ key: 'reasoning.summary', label: 'Summary' }), 'Thinking summary');
+    assert.equal(labelFor({ key: 'top_k', label: 'Top k' }), 'Top k');
+});

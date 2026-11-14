@@ -70,12 +70,26 @@ export const SILLYTAVERN_EXPLANATIONS = Object.freeze({
 
 /** SillyTavern controls whose block has no titled heading, by element id. */
 export const ST_CONTROL_EXPLANATIONS = Object.freeze({
-    openai_show_thoughts: 'Show the model\'s thinking in the chat (folded above the reply). Off hides it; the model still thinks.',
+    openai_show_thoughts: 'Show the model\'s thinking in the chat, folded above the reply. Off only hides it; to stop the thinking itself, set Thinking to Off.',
     stream_toggle: 'Show the reply word by word as it\'s written, instead of all at once at the end.',
     openai_reasoning_effort: SILLYTAVERN_EXPLANATIONS['Reasoning Effort'],
     openai_verbosity: FIELD_EXPLANATIONS.verbosity,
     openai_enable_web_search: 'Let the model search the web, on connections where SillyTavern supports it.',
 });
+
+/** Clearer names for provider options whose spec name is vague. */
+export const LABELS = Object.freeze({
+    'reasoning.summary': 'Thinking summary',
+    'venice_parameters.strip_thinking_response': 'Hide thinking from the reply (still thinks)',
+    'venice_parameters.include_venice_system_prompt': 'Venice\'s own system prompt',
+    'venice_parameters.enable_web_search': 'Web search',
+    'prompt_cache_retention': 'Prompt caching',
+});
+
+/** Display name for an option: a clearer name if Dials has one, else the spec's. */
+export function labelFor(option) {
+    return LABELS[option.key] ?? option.label;
+}
 
 /** Plain explanation for a provider option, or null. */
 export function explainField(key) {

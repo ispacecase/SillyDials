@@ -1,5 +1,6 @@
 // Plans the merged settings list: every setting once, grouped by meaning, Recommended first.
 // Pure: no SillyTavern or browser imports.
+import { THINKING_FIELDS } from './thinking.mjs';
 
 /**
  * Groups and their members, in display order.
@@ -14,7 +15,7 @@ export const GROUPS = Object.freeze([
             { st: 'top_p_openai' },
             { st: 'openai_max_tokens' },
             { st: 'openai_max_context' },
-            { fields: ['reasoning_effort', 'reasoning.effort'], st: 'openai_reasoning_effort' },
+            { thinking: true, st: 'openai_reasoning_effort' },
             { st: 'openai_show_thoughts' },
             { st: 'stream_toggle' },
             { fields: ['venice_parameters.include_venice_system_prompt'] },
@@ -23,8 +24,6 @@ export const GROUPS = Object.freeze([
     },
     {
         id: 'thinking', label: 'Thinking', members: [
-            { fields: ['reasoning.enabled'] },
-            { fields: ['venice_parameters.disable_thinking'] },
             { fields: ['venice_parameters.strip_thinking_response'] },
             { fields: ['reasoning.summary'] },
         ],
@@ -79,11 +78,13 @@ export const TECHNICAL_FIELDS = Object.freeze(['user', 'anon_user_id', 'store', 
  * @param {Set<string>} ctx.stPresent SillyTavern control ids that exist
  * @param {Set<string>} ctx.setKeys provider option keys the user has set (always shown)
  * @param {boolean} ctx.showUnsupported
- * @returns {{groups: Array<{id, label, tab: 'recommended'|'experts', open, rows: Array<{type:'st', id} | {type:'field', option, supported}>}>, hideSt: string[], hiddenUnsupported: number}}
+ * @param {object|null} ctx.thinking thinkingInfo() for this model; when set (and sendable) one Thinking row replaces every thinking field
+ * @returns {{groups: Array<{id, label, tab: 'recommended'|'experts', open, rows: Array<{type:'st', id} | {type:'field', option, supported} | {type:'thinking', info}>}>, hideSt: string[], hiddenUnsupported: number}}
  */
-export function planLayout({ options = [], supports = () => null, canSend = true, stPresent = new Set(), setKeys = new Set(), showUnsupported = false } = {}) {
+export function planLayout({ options = [], supports = () => null, canSend = true, stPresent = new Set(), setKeys = new Set(), showUnsupported = false, thinking = null } = {}) {
     const byKey = new Map(options.map(o => [o.key, o]));
-    const placed = new Set();
+    // The thinking fields are only ever shown through the single Thinking control.
+    const placed = new Set(THINKING_FIELDS);
     const hideSt = [];
     let hiddenUnsupported = 0;
     const visible = option => {
@@ -103,6 +104,15 @@ export function planLayout({ options = [], supports = () => null, canSend = true
     const groups = GROUPS.map(g => {
         const rows = [];
         for (const m of g.members) {
+            if (m.thinking) {
+                if (canSend && thinking) {
+                    rows.push({ type: 'thinking', info: thinking });
+                    if (m.st && stPresent.has(m.st)) hideSt.push(m.st);
+                } else if (m.st && stPresent.has(m.st)) {
+                    rows.push({ type: 'st', id: m.st });
+                }
+                continue;
+            }
             const fieldKey = canSend ? (m.fields ?? []).find(k => byKey.has(k)) : undefined;
             if (fieldKey) {
                 // Alternate spellings of the same setting count as placed, so they don't show up again below.

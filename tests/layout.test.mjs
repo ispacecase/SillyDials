@@ -4,24 +4,26 @@ import { readFile } from 'node:fs/promises';
 import { planLayout, placeableStIds, GROUPS } from '../src/layout.mjs';
 import { optionsFromSchema, leaves, providerNotes } from '../src/spec.mjs';
 import { normalizeModels, supportsOption, defaultFor, allowedValues, capabilityList, modelDefaultForField } from '../src/models.mjs';
+import { thinkingInfo, THINKING_FIELDS } from '../src/thinking.mjs';
 
 const snapshot = JSON.parse(await readFile(new URL('../data/venice-chat-request.json', import.meta.url), 'utf8'));
 const models = normalizeModels(JSON.parse(await readFile(new URL('./fixtures/venice-models.json', import.meta.url), 'utf8')), 'venice');
 const options = leaves(optionsFromSchema(snapshot.schema));
 const ALL_ST = new Set(placeableStIds());
-const plan = (model, extra = {}) => planLayout({ options, supports: o => supportsOption(o, model, 'venice'), canSend: true, stPresent: ALL_ST, ...extra });
-const keysIn = (p, group) => p.groups.find(g => g.id === group)?.rows.map(r => r.type === 'st' ? `st:${r.id}` : r.option.key) ?? [];
+const plan = (model, extra = {}) => { const supports = o => supportsOption(o, model, 'venice'); return planLayout({ options, supports, canSend: true, stPresent: ALL_ST, thinking: thinkingInfo(options, model, supports), ...extra }); };
+const rowKey = r => r.type === 'st' ? `st:${r.id}` : r.type === 'thinking' ? 'thinking' : r.option.key;
+const keysIn = (p, group) => p.groups.find(g => g.id === group)?.rows.map(rowKey) ?? [];
 
 test('every setting appears once', () => {
     const p = plan(models.get('deepseek-v4-pro'));
-    const all = p.groups.flatMap(g => g.rows.map(r => r.type === 'st' ? `st:${r.id}` : r.option.key));
+    const all = p.groups.flatMap(g => g.rows.map(rowKey));
     assert.equal(all.length, new Set(all).size);
 });
 
 test('Custom/Venice: provider rows replace SillyTavern duplicates (reasoning effort, verbosity, web search)', () => {
     const p = plan(models.get('deepseek-v4-pro'));
     const rec = keysIn(p, 'recommended');
-    assert.ok(rec.includes('reasoning_effort'));
+    assert.ok(rec.includes('thinking'));
     assert.ok(!rec.includes('st:openai_reasoning_effort'));
     assert.ok(rec.includes('venice_parameters.include_venice_system_prompt'), 'Venice system prompt is recommended');
     assert.ok(rec.includes('st:temp_openai'));
@@ -37,12 +39,21 @@ test('recommended group is on the Recommended tab, everything else on Experts', 
     for (const g of p.groups) assert.equal(g.tab, g.id === 'recommended' ? 'recommended' : 'experts');
 });
 
-test('model without reasoning effort: the option is hidden and counted', () => {
+test('thinking appears exactly once, as the Thinking control, never as raw fields', () => {
+    for (const id of ['deepseek-v4-pro', 'gemini-4-carbon']) {
+        const p = plan(models.get(id), { showUnsupported: true });
+        const all = p.groups.flatMap(g => g.rows.map(rowKey));
+        assert.equal(all.filter(k => k === 'thinking').length, 1, id);
+        for (const f of THINKING_FIELDS) assert.ok(!all.includes(f), `${id}: ${f} shown separately`);
+    }
+});
+
+test('unsupported options are hidden and counted, but shown once you set them', () => {
     const p = plan(models.get('gemini-4-carbon'));
-    assert.ok(!keysIn(p, 'recommended').includes('reasoning_effort'));
     assert.ok(p.hiddenUnsupported > 0);
-    const shown = plan(models.get('gemini-4-carbon'), { setKeys: new Set(['reasoning_effort']) });
-    assert.ok(keysIn(shown, 'recommended').includes('reasoning_effort'), 'a value you set is never hidden');
+    assert.ok(!keysIn(p, 'web').includes('venice_parameters.enable_x_search'));
+    const shown = plan(models.get('gemini-4-carbon'), { setKeys: new Set(['venice_parameters.enable_x_search']) });
+    assert.ok(keysIn(shown, 'web').includes('venice_parameters.enable_x_search'));
 });
 
 test('cannot send (e.g. OpenRouter source): SillyTavern controls only, nothing hidden', () => {
